@@ -1,6 +1,8 @@
 var http = require('http')
 var fs = require('fs')
 var url = require('url')
+const { resolve } = require('path')
+const { report } = require('process')
 var port = process.argv[2]
 
 if (!port) {
@@ -20,32 +22,95 @@ var server = http.createServer(function (request, response) {
   /******** 从这里开始看，上面不要看 ************/
 
   console.log('有个傻子发请求过来啦！路径（带查询参数）为：' + pathWithQuery)
-  console.log(request.url)
+  if(path === '/sign_in' && method === "POST"){
+    const userArray = JSON.parse(fs.readFileSync('./db/users.json')) 
+    const array =[]
+    request.on('data', chunk=>{
+      array.push(chunk)
+    })
+    request.on('end', ()=>{
+      const string = Buffer.concat(array).toString()
+      const obj = JSON.parse(string)
+      const user = userArray.find(user => user.name === obj.name && user.password === obj.password) //返回符合条件的第一个元素
+      if(user === undefined){
+        response.statusCode = 400
+        response.setHeader('Content-Type', 'text/json;charset=utf-8')
+        response.end(`{"errorCode": 4001}`)
+      }else{
+        response.statusCode = 200
+        response.setHeader('Set-Cookie', `user_id=${user.id}; HttpOnly`) //HttpOnly意思是不允许前端设置这个cookie，读都读不到
+      }
+    })
+  }else if(path === '/home.html'){
+    const cookie = request.headers['cookie']
+    let userId
+    try{
+      userId = cookie.split(';').filter(s => s.indexOf('user_id') > 0)[0].split("=")[1]
+    }catch(error){ }
 
-
-  response.statusCode = 200
-  const filePath = path === '/' ? 'index.html' : path //默认首页
-  const index = filePath.lastIndexOf('.')
-  const suffix = filePath.substring(index) //suffix:后缀的意思
-  const fileTypes = {
-    '.html': 'text/html',
-    '.css': 'text/css',
-    '.js': 'text/javascript',
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg'
+    if(userId){
+      const userArray = JSON.parse(fs.readFileSync('./db/users.json')) 
+      const user = userArray.find(user => user.id.toString() === userId)
+      const homeHtml = fs.readFileSync('./public/home.html').toString()
+      let string
+      if(user){
+        string = homeHtml.replace('{{loginStatus}}', '已登陆').replace('{{user.name}}', user.name)
+      }else{
+        string = homeHtml.replace('{{loginStatus}}', '用户未登陆').replace('{{user.name}}', '')
+      }
+      response.write(string)
+    }else{
+      const homeHtml = fs.readFileSync('./public/home.html').toString()
+      const string = homeHtml.replace('{{loginStatus}}', '未登陆').replace('{{user.name}}', '')
+      response.write(string)
+    }
+  }else if(path === '/register' && method === "POST"){
+    response.setHeader('Content-Type', 'text/html;charset=utf-8')
+    const userArray = JSON.parse(fs.readFileSync('./db/users.json')) 
+    const array =[]
+    request.on('data', chunk=>{
+      array.push(chunk)
+    })
+    request.on('end', ()=>{
+      const string = Buffer.concat(array).toString()
+      const obj = JSON.parse(string)
+      const lastUser = userArray[userArray.length-1]
+      const newUser = {
+        // id为目前数据库最后一个用户的id+1
+        id: lastUser ? lastUser.id + 1 : 1, 
+        name: obj.name,
+        password: obj.password
+      }
+      userArray.push(newUser) 
+      fs.writeFileSync('./db/users.json', JSON.stringify(userArray))
+    })
+  }else{
+    response.statusCode = 200
+    const filePath = path === '/' ? 'index.html' : path //默认首页
+    const index = filePath.lastIndexOf('.')
+    const suffix = filePath.substring(index) //suffix:后缀的意思
+    const fileTypes = {
+      '.html': 'text/html',
+      '.css': 'text/css',
+      '.js': 'text/javascript',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg'
+    }
+    console.log(fileTypes[suffix] || 'text/html')
+    // fileTypes[suffix] || 'text/html' : ||后面的是以防输入的路径不是上面的几种，用来兜底
+    response.setHeader('Content-Type', `${fileTypes[suffix] || 'text/html'};charset=utf-8`)
+    let content
+    try {
+      content = fs.readFileSync(`public/${filePath}`) // 文件不存在的话，可能访问不到，用try catch
+    } catch (error) {
+      content = '文件不存在'
+      response.statusCode = 404
+    }
+    response.write(content)
   }
-  console.log(fileTypes[suffix] || 'text/html')
-  // fileTypes[suffix] || 'text/html' : ||后面的是以防输入的路径不是上面的几种，用来兜底
-  response.setHeader('Content-Type', `${fileTypes[suffix] || 'text/html'};charset=utf-8`)
-  let content
-  try {
-    content = fs.readFileSync(`public/${filePath}`) // 文件不存在的话，可能访问不到，用try catch
-  } catch (error) {
-    content = '文件不存在'
-    response.statusCode = 404
-  }
-  response.write(content)
   response.end()
+
+  
 
 
   /******** 代码结束，下面不要看 ************/
